@@ -1,7 +1,7 @@
 {
   inputs = {
 
-    nixpkgs.url = "nixpkgs/nixos-21.11";
+    nixpkgs.url = "nixpkgs/nixos-22.11";
 
     # the nixpkgs version shipped with the nix-portable executable
     # TODO: find out why updating this leads to error when building pkgs.hello:

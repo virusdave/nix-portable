@@ -118,6 +118,10 @@ let
     rm -rf "\$dir/tmpbin"
     # create a directory to hold executable symlinks for overriding
     mkdir -p "\$dir/tmpbin"
+    # create a nix top-level
+    mkdir -p "\$dir/nix"
+    # create nix store dir
+    mkdir -p "\$dir/nix/var/nix/db"
 
     # the fingerprint being present inside a file indicates that
     # this version of nix-portable has already been initialized
@@ -278,7 +282,7 @@ let
       done
 
       # if we're on a nixos, the /bin/sh symlink will point
-      # to a /nix/store path which doesn't exit inside the wrapped env
+      # to a /nix/store path which doesn't exist inside the wrapped env
       # we fix this by binding busybox/bin to /bin
       if test -s /bin/sh && [[ "\$(realpath /bin/sh)" == /nix/store/* ]]; then
         toBind="\$toBind \$dir/busybox/bin /bin"
@@ -316,6 +320,17 @@ let
       if \$NP_BWRAP --bind \$dir/emptyroot / --bind \$dir/ /nix --bind \$dir/busybox/bin/busybox "\$dir/true" "\$dir/true" 2>&3 ; then
         debug "bwrap seems to work on this system -> will use bwrap"
         NP_RUNTIME=bwrap
+        debug "checking for bwrap support of overlays"
+
+        # TODO(Dave): Much better would be to actually overlay-mount the host /nix/store under a tmpfs
+        # and make sure there are >0 directory entries visible.
+        if \$NP_BWRAP --help | grep -q overlay; then
+          debug "bwrap seems to support overlays -> will overlay host's /nix/store underneath ours if NP_OVERLAY_HOST_STORE is set"
+          local overlay_binds="\''${NP_OVERLAY_HOST_STORE:+"--overlay-src /nix/store --overlay \"\$dir/nix/store\" \"\$dir/work\" /nix/store"}"
+        else
+          debug "bwrap doesn't seem to support overlays -> can't use host's /nix/store"
+          local overlay_binds=""
+        fi
       else
         debug "bwrap doesn't work on this system -> will use proot"
         NP_RUNTIME=proot
@@ -329,7 +344,8 @@ let
       run="\$NP_BWRAP \$BWRAP_ARGS \\
         --bind \$dir/emptyroot /\\
         --dev-bind /dev /dev\\
-        --bind \$dir/ /nix\\
+        --bind \$dir/nix /nix\\
+        \$overlay_binds
         \$binds"
         # --bind \$dir/busybox/bin/busybox /bin/sh\\
     else
@@ -339,9 +355,11 @@ let
       run="\$NP_PROOT \$PROOT_ARGS\\
         -r \$dir/emptyroot\\
         -b /dev:/dev\\
-        -b \$dir/store:/nix/store\\
+        -b \$dir/nix:/nix\\
         \$binds"
         # -b \$dir/busybox/bin/busybox:/bin/sh\\
+        # This was above the `$binds` line above
+        #-b \$dir/store:/nix/store\\
     fi
     debug "base command will be: \$run"
 
@@ -361,7 +379,7 @@ let
 
     export missing=\$(
       for path in \$index; do
-        if [ ! -e \$dir/store/\$(basename \$path) ]; then
+        if [ ! -e \$dir/nix/store/\$(basename \$path) ]; then
           echo "nix/store/\$(basename \$path)"
         fi
       done
@@ -370,13 +388,13 @@ let
     if [ -n "\$missing" ]; then
       debug "extracting missing store paths"
       (
-        mkdir -p \$dir/tmp \$dir/store/
+        mkdir -p \$dir/tmp \$dir/nix/store/
         rm -rf \$dir/tmp/*
         cd \$dir/tmp
         unzip -qqp "\$self" ${ lib.removePrefix "/" "${storeTar}/tar"} \
           | \$dir/bin/zstd -d \
           | tar -x \$missing --strip-components 2
-        mv \$dir/tmp/* \$dir/store/
+        mv \$dir/tmp/* \$dir/nix/store/
       )
       rm -rf \$dir/tmp
     fi
@@ -384,7 +402,7 @@ let
     if [ -n "\$missing" ]; then
       debug "registering new store paths to DB"
       reg="$(cat ${storeTar}/closureInfo/registration)"
-      cmd="\$run \$dir/store${lib.removePrefix "/nix/store" nix}/bin/nix-store --load-db"
+      cmd="\$run \$dir/${nix}/bin/nix-store --load-db"
       debug "running command: \$cmd"
       echo "\$reg" | \$cmd
     fi
@@ -403,11 +421,11 @@ let
         bin="\$(which \$2)"
         shift; shift
       else
-        bin="\$dir/store${lib.removePrefix "/nix/store" nix}/bin/\$1"
+        bin="\$dir/${nix}/bin/\$1"
         shift
       fi
     else
-      bin="\$dir/store${lib.removePrefix "/nix/store" nix}/bin/\$(basename \$0)"
+      bin="\$dir/${nix}/bin/\$(basename \$0)"
     fi
 
 
@@ -420,7 +438,7 @@ let
     ### check if nix is funtional with or without sandbox
     # sandbox-fallback is not reliable: https://github.com/NixOS/nix/issues/4719
     if [ "\$newNPVersion" == "true" ] || [ "\$lastRuntime" != "\$NP_RUNTIME" ]; then
-      nixBin="\$dir/store${lib.removePrefix "/nix/store" nix}/bin/nix-build"
+      nixBin="\$dir/${nix}/bin/nix-build"
       debug "Testing if nix can build stuff without sandbox"
       if ! \$run "\$nixBin" -E "(import <nixpkgs> {}).runCommand \\"test\\" {} \\"echo \$(date) > \\\$out\\"" --option sandbox false >&3 2>&3; then
         echo "Fatal error: nix is unable to build packages"
@@ -458,9 +476,9 @@ let
 
 
     ### install git via nix, if git installation is not in /nix path
-    if \$doInstallGit && [ ! -e \$dir/store${lib.removePrefix "/nix/store" git.out} ] ; then
+    if \$doInstallGit && [ ! -e \$dir/${git.out} ] ; then
       echo "Installing git. Disable this by specifying the git executable path with 'NP_GIT'"
-      \$run \$dir/store${lib.removePrefix "/nix/store" nix}/bin/nix build --impure --no-link --expr "
+      \$run \$dir/${nix}/bin/nix build --impure --no-link --expr "
         (import ${nixpkgsSrc} {}).${gitAttribute}.out
       "
     else
