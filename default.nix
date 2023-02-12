@@ -326,10 +326,10 @@ let
         # and make sure there are >0 directory entries visible.
         if \$NP_BWRAP --help | grep -q overlay; then
           debug "bwrap seems to support overlays -> will overlay host's /nix/store underneath ours if NP_OVERLAY_HOST_STORE is set"
-          local overlay_binds="\''${NP_OVERLAY_HOST_STORE:+"--overlay-src /nix/store --overlay \"\$dir/nix/store\" \"\$dir/work\" /nix/store"}"
+          overlay_binds="\''${NP_OVERLAY_HOST_STORE:+"--overlay-src /nix/store --overlay \"\$dir/nix/store\" \"\$dir/work\" /nix/store"}"
         else
           debug "bwrap doesn't seem to support overlays -> can't use host's /nix/store"
-          local overlay_binds=""
+          overlay_binds=""
         fi
       else
         debug "bwrap doesn't work on this system -> will use proot"
