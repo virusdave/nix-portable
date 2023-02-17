@@ -124,8 +124,11 @@
             lib = inp.nixpkgs.lib;
             compression = "zstd -3 -T1";
 
-            #nix = inp.nix.packages."${system}".nix;
-            nix = inp.nixpkgs.legacyPackages."${system}".nix;
+            # TODO(Dave): Testing this out for the moment
+            useHostNixpkgs = true;
+
+            #nix = inp.nixpkgs.legacyPackages."${system}".nix;
+            nix = inp.nixpkgs.legacyPackages."${system}".nix.override { enableDocumentation = false; };
 
             busybox = pkgs.pkgsStatic.busybox;
             bwrap = pkgs.pkgsStatic.bubblewrap;
