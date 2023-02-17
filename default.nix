@@ -2,7 +2,7 @@ with builtins;
 {
   bwrap,
   nix,
-  proot,
+#  proot,
   unzip,
   zip,
   unixtools,
@@ -68,7 +68,7 @@ let
   caBundleZstd = pkgs.runCommand "cacerts" {} "cat ${cacert}/etc/ssl/certs/ca-bundle.crt | ${inp.zstd}/bin/zstd -19 > $out";
 
   bwrap = packStaticBin "${inp.bwrap}/bin/bwrap";
-  proot = packStaticBin "${inp.proot}/bin/proot";
+  #proot = packStaticBin "${inp.proot}/bin/proot";
   zstd = packStaticBin "${inp.zstd}/bin/zstd";
 
   # the default nix store contents to extract when first used
@@ -182,7 +182,7 @@ let
 
       # install other binaries
       ${installBin zstd "zstd"}
-      ${installBin proot "proot"}
+      
       ${installBin bwrap "bwrap"}
 
       # install ssl cert bundle
@@ -312,9 +312,9 @@ let
     [ -z "\$NP_BWRAP" ] && NP_BWRAP=\$(PATH="\$PATH_OLD:\$PATH" which bwrap 2>/dev/null) || true
     [ -z "\$NP_BWRAP" ] && NP_BWRAP=\$dir/bin/bwrap
     debug "bwrap executable: \$NP_BWRAP"
-    [ -z "\$NP_PROOT" ] && NP_PROOT=\$(PATH="\$PATH_OLD:\$PATH" which proot 2>/dev/null) || true
-    [ -z "\$NP_PROOT" ] && NP_PROOT=\$dir/bin/proot
-    debug "proot executable: \$NP_PROOT"
+    #[ -z "\$NP_PROOT" ] && NP_PROOT=\$(PATH="\$PATH_OLD:\$PATH" which proot 2>/dev/null) || true
+    #[ -z "\$NP_PROOT" ] && NP_PROOT=\$dir/bin/proot
+    #debug "proot executable: \$NP_PROOT"
     if [ -z "\$NP_RUNTIME" ]; then
       # check if bwrap works properly
       if \$NP_BWRAP --bind \$dir/emptyroot / --bind \$dir/ /nix --bind \$dir/busybox/bin/busybox "\$dir/true" "\$dir/true" 2>&3 ; then
@@ -527,7 +527,7 @@ let
     unzip -vl $out/bin/nix-portable.zip
 
     zip="${zip}/bin/zip -0"
-    $zip $out/bin/nix-portable.zip ${proot}/bin/proot
+    
     $zip $out/bin/nix-portable.zip ${bwrap}/bin/bwrap
     $zip $out/bin/nix-portable.zip ${zstd}/bin/zstd
     $zip $out/bin/nix-portable.zip ${storeTar}/tar
@@ -547,6 +547,7 @@ let
 in
 nixPortable.overrideAttrs (prev: {
   passthru = (prev.passthru or {}) // {
-    inherit bwrap proot;
+    inherit bwrap /*proot*/;
+    #inputs = { inherit (inp) bwrap /*proot*/; };
   };
 })
