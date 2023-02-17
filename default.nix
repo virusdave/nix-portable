@@ -17,6 +17,9 @@ with builtins;
   xz ? pkgs.pkgsStatic.xz,
   zstd ? pkgs.pkgsStatic.zstd,
 
+  allowOverlayHostNixStore ? false,
+  useHostNixpkgs ? false,
+
   buildSystem ? builtins.currentSystem,
   ...
 }@inp:
@@ -24,7 +27,6 @@ with lib;
 let
 
   nixpkgsSrc = pkgs.path;
-
   pkgsBuild = import pkgs.path { system = buildSystem; };
 
   # TODO: git could be more minimal via:
@@ -32,7 +34,7 @@ let
   gitAttribute = "gitMinimal";
   git = pkgs."${gitAttribute}";
 
-  maketar = targets:
+  maketar = targets: infoOnly:
     pkgsBuild.stdenv.mkDerivation {
       name = "maketar";
       nativeBuildInputs = [ pkgsBuild.perl pkgsBuild.zstd ];
@@ -41,7 +43,7 @@ let
         storePaths=$(perl ${pkgsBuild.pathsFromGraph} ./closure-*)
         mkdir $out
         echo $storePaths > $out/index
-        cp -r ${pkgsBuild.closureInfo { rootPaths = targets; }} $out/closureInfo
+        cp -r ${pkgsBuild.closureInfo { rootPaths = targets ++ infoOnly; }} $out/closureInfo
 
         tar -cf - \
           --owner=0 --group=0 --mode=u+rw,uga+r \
@@ -72,7 +74,9 @@ let
   zstd = packStaticBin "${inp.zstd}/bin/zstd";
 
   # the default nix store contents to extract when first used
-  storeTar = maketar ([ cacert nix nixpkgsSrc ]);
+  storeTar = maketar ([ cacert nix ] ++
+    (lib.optional (! useHostNixpkgs) nixpkgsSrc)
+  ) (lib.optional useHostNixpkgs nixpkgsSrc);
 
 
   # The runtime script which unpacks the necessary files to $HOME/.nix-portable
@@ -155,6 +159,18 @@ let
 
     PATH_OLD="\$PATH"
 
+    ${if useHostNixpkgs then ''
+    # TODO(Dave): Remove this
+    # HOST_NIXSTORE=\$( cmd="nix-store"; dir="\$(dirname "\$(which \$cmd)")"; next="\$dir"; while [ -L "\$next/\$cmd" ]; do  dir="\$next"; next="\$(dirname "\$(readlink "\$dir/\$cmd")")"; done; echo "\$dir/\$cmd" )
+
+      if [ ! -e ${nixpkgsSrc} ]; then
+        debug "Selected to bind nixpkgs from host, but couldn't find host's matching nixpkgs at ${nixpkgsSrc}"
+        exit 1
+      fi
+    '' else ""}
+
+    nixpkgs_bind="${if useHostNixpkgs then "--bind ${nixpkgsSrc} ${nixpkgsSrc}" else ""}"
+
     # as soon as busybox is unpacked, restrict PATH to busybox to ensure reproducibility of this script
     # only unpack binaries if necessary
     if [ "\$newNPVersion" == "false" ]; then
@@ -182,7 +198,7 @@ let
 
       # install other binaries
       ${installBin zstd "zstd"}
-      
+
       ${installBin bwrap "bwrap"}
 
       # install ssl cert bundle
@@ -320,17 +336,22 @@ let
       if \$NP_BWRAP --bind \$dir/emptyroot / --bind \$dir/ /nix --bind \$dir/busybox/bin/busybox "\$dir/true" "\$dir/true" 2>&3 ; then
         debug "bwrap seems to work on this system -> will use bwrap"
         NP_RUNTIME=bwrap
+
+        ${if (!allowOverlayHostNixStore) then ''overlay_binds=""'' else ''
         debug "checking for bwrap support of overlays"
 
         # TODO(Dave): Much better would be to actually overlay-mount the host /nix/store under a tmpfs
         # and make sure there are >0 directory entries visible.
         if \$NP_BWRAP --help | grep -q overlay; then
           debug "bwrap seems to support overlays -> will overlay host's /nix/store underneath ours if NP_OVERLAY_HOST_STORE is set"
+          \''${NP_OVERLAY_HOST_STORE:+mkdir -p "\$dir/work"}
           overlay_binds="\''${NP_OVERLAY_HOST_STORE:+"--overlay-src /nix/store --overlay \"\$dir/nix/store\" \"\$dir/work\" /nix/store"}"
         else
           debug "bwrap doesn't seem to support overlays -> can't use host's /nix/store"
           overlay_binds=""
         fi
+        ''}
+
       else
         debug "bwrap doesn't work on this system -> will use proot"
         NP_RUNTIME=proot
@@ -345,7 +366,8 @@ let
         --bind \$dir/emptyroot /\\
         --dev-bind /dev /dev\\
         --bind \$dir/nix /nix\\
-        \$overlay_binds
+        \$overlay_binds \\
+        \$nixpkgs_bind \\
         \$binds"
         # --bind \$dir/busybox/bin/busybox /bin/sh\\
     else
@@ -366,6 +388,7 @@ let
 
 
     ### setup environment
+    # TODO(Dave): Really do we want this one not pointing relative to the chroot?  Seems odd...
     export NIX_PATH="\$dir/channels:nixpkgs=\$dir/channels/nixpkgs"
     mkdir -p \$dir/channels
     [ -h \$dir/channels/nixpkgs ] || ln -s ${nixpkgsSrc} \$dir/channels/nixpkgs
@@ -399,6 +422,26 @@ let
       rm -rf \$dir/tmp
     fi
 
+    # TODO(Dave): Remove this
+    # ${if (useHostNixpkgs) then ''
+    # if [ ! -e \$dir/${nixpkgsSrc} ]; then
+    #   if [ ! -x "\$HOST_NIXSTORE" ]; then
+    #     debug "Selected to copy nixpkgs (and thus implicitly use nix-store) from host, but couldn't find host's nix-store"
+    #     exit 1
+    #   elif [ ! -e ${nixpkgsSrc} ]; then
+    #     debug "Selected to copy nixpkgs from host, but couldn't find host's matching nixpkgs at ${nixpkgsSrc}"
+    #     exit 1
+    #   else
+    #     debug "copying missing nixpkgs from host"
+    #     (
+    #       cmd="\$run \$dir/${nix}/bin/nix-store --import"
+    #       debug "running command: \$cmd"
+    #       \$HOST_NIXSTORE --export ${nixpkgsSrc} | \$cmd
+    #     )
+    #   fi
+    # fi
+    # '' else "" }
+
     if [ -n "\$missing" ]; then
       debug "registering new store paths to DB"
       reg="$(cat ${storeTar}/closureInfo/registration)"
@@ -406,8 +449,6 @@ let
       debug "running command: \$cmd"
       echo "\$reg" | \$cmd
     fi
-
-
 
     ### select executable
     # the executable can either be selected by executing './nix-portable BIN_NAME',
@@ -503,6 +544,9 @@ let
       debug "running command: \$cmd"
       exec \$NP_RUN \$bin "\$@"
     fi
+
+    debug "sanitizing tmpbin"
+    rm -rf "\$dir/tmpbin"
   '';
 
   runtimeScriptEscaped = replaceStrings ["\""] ["\\\""] runtimeScript;
@@ -527,7 +571,7 @@ let
     unzip -vl $out/bin/nix-portable.zip
 
     zip="${zip}/bin/zip -0"
-    
+
     $zip $out/bin/nix-portable.zip ${bwrap}/bin/bwrap
     $zip $out/bin/nix-portable.zip ${zstd}/bin/zstd
     $zip $out/bin/nix-portable.zip ${storeTar}/tar
