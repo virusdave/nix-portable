@@ -109,6 +109,7 @@
           pkgsDefaultChannel = import inp.defaultChannel { inherit system crossSystem; };
           pkgs = import inp.nixpkgs { inherit system crossSystem; };
           pkgsCached = if crossSystem == null then pkgs else import inp.nixpkgs { system = crossSystem; };
+          pkgsBuild = inp.nixpkgs.legacyPackages."${system}";
 
           # the static proot built with nix somehow didn't work on other systems,
           # therefore using the proot static build from proot gitlab
@@ -127,8 +128,29 @@
             # TODO(Dave): Testing this out for the moment
             useHostNixpkgs = true;
 
-            #nix = inp.nixpkgs.legacyPackages."${system}".nix;
-            nix = inp.nixpkgs.legacyPackages."${system}".nix.override { enableDocumentation = false; };
+            #nix = pkgsBuild.nix;
+            # nix = pkgsBuild.nix.override {
+            #   enableDocumentation = false;
+            #   stdenv = pkgsBuild.stdenv.override {
+            #     libc = pkgsBuild.glibc.overrideAttrs (me: {
+            #       configureFlags = me.configureFlags ++ ["--disable-nls"];
+            #     });
+            #   };
+            # };
+
+            # TODO(Dave): Producing a `stdenv` with tiny glibc seems like a useful overlay to add to `pkgs`
+            nix = with pkgsBuild; let
+              thinGlibc = glibc.overrideAttrs (me: {configureFlags = me.configureFlags ++ ["--disable-nls"];});
+              thinLibcGcc = wrapCCWith {
+                inherit (stdenv.cc) cc;
+                libc = thinGlibc;
+                bintools = wrapBintoolsWith {
+                  inherit bintools;
+                  libc = thinGlibc;
+                };
+              };
+              thinLibcStdenv = overrideCC stdenv thinLibcGcc;
+            in nix.override {stdenv = thinLibcStdenv;};
 
             busybox = pkgs.pkgsStatic.busybox;
             bwrap = pkgs.pkgsStatic.bubblewrap;
