@@ -125,8 +125,9 @@
             lib = inp.nixpkgs.lib;
             compression = "zstd -3 -T1";
 
-            # TODO(Dave): Testing this out for the moment
+            # TODO(Dave): Testing these out for the moment
             useHostNixpkgs = true;
+            allowOverlayHostNixStore = true;
 
             #nix = pkgsBuild.nix;
             # nix = pkgsBuild.nix.override {
@@ -153,7 +154,14 @@
             in nix.override {stdenv = thinLibcStdenv;};
 
             busybox = pkgs.pkgsStatic.busybox;
-            bwrap = pkgs.pkgsStatic.bubblewrap;
+            bwrap = pkgs.pkgsStatic.bubblewrap.overrideAttrs (final: prev: {
+              src = pkgs.fetchFromGitHub {
+                owner = "rhendric";
+                repo = "bubblewrap";
+                rev = "rhendric/overlayfs";
+                hash = "sha256-EWsuAGsShaHEmLi0jUHX2bFQZkinIOsRbgB7tZSfq8E=";
+              };
+            });
             gnutar = pkgs.pkgsStatic.gnutar;
             perl = pkgs.pkgsBuildBuild.perl;
             xz = pkgs.pkgsStatic.xz;

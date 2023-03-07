@@ -344,8 +344,16 @@ let
         # and make sure there are >0 directory entries visible.
         if \$NP_BWRAP --help | grep -q overlay; then
           debug "bwrap seems to support overlays -> will overlay host's /nix/store underneath ours if NP_OVERLAY_HOST_STORE is set"
-          \''${NP_OVERLAY_HOST_STORE:+mkdir -p "\$dir/work"}
-          overlay_binds="\''${NP_OVERLAY_HOST_STORE:+"--overlay-src /nix/store --overlay \"\$dir/nix/store\" \"\$dir/work\" /nix/store"}"
+          # TODO(Dave): Should we clear out the workdir?  Probably, since otherwise a GC inside the chroot will 'permanently'
+          # mark all of the host's store to be deleted, I imagine.
+          if [ -n "\$NP_OVERLAY_HOST_STORE" ]; then
+            mkdir -p "\$dir/overlay-workdir"
+            chmod -R +rwx "\$dir/overlay-workdir/"*
+            rm -rf "\$dir/overlay-workdir/"*
+            overlay_binds="--overlay-src /nix/store --overlay \$dir/nix/store \$dir/overlay-workdir /nix/store"
+          else
+            overlay_binds=""
+          fi
         else
           debug "bwrap doesn't seem to support overlays -> can't use host's /nix/store"
           overlay_binds=""
